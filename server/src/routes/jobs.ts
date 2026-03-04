@@ -12,7 +12,7 @@ export const jobsRouter = Router();
 
 const createJobSchema = z.object({
   task: z.string().min(1).max(10000),
-  agent_type: z.enum(["claude-code", "codex", "opencode", "mock"]).optional(),
+  agent_type: z.enum(["claude-code", "codex", "opencode", "mock", "auto"]).optional(),
   max_iterations: z.number().int().min(1).max(20).optional(),
   timeout_seconds: z.number().int().min(60).max(7200).optional(),
   base_branch: z.string().optional(),
@@ -22,7 +22,10 @@ const createJobSchema = z.object({
 jobsRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body = createJobSchema.parse(req.body);
-    const job = await createJob(body);
+    const job = await createJob({
+      ...body,
+      agent_type: body.agent_type === "auto" ? undefined : body.agent_type,
+    });
 
     // Enqueue for worker
     await jobQueue.add("run-agent", { jobId: job.id }, {

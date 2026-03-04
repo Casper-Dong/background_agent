@@ -83,7 +83,7 @@ export async function createJob(params: {
     [
       params.task,
       params.repo_url || `https://github.com/${config.GITHUB_OWNER}/${config.GITHUB_REPO}.git`,
-      params.agent_type || config.AGENT_TYPE,
+      params.agent_type && params.agent_type !== "auto" ? params.agent_type : config.AGENT_TYPE,
       params.max_iterations || config.SANDBOX_MAX_ITERATIONS,
       params.timeout_seconds || config.SANDBOX_TIMEOUT_SECONDS,
       params.slack_channel || null,

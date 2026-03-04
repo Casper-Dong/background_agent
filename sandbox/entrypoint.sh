@@ -12,6 +12,7 @@ MAX_ITERATIONS="${MAX_ITERATIONS:-5}"
 
 RESULT_DIR="/workspace/.agent-result"
 REPO_DIR="/workspace/repo"
+USING_DEFAULT_VERIFY=false
 
 mkdir -p "$RESULT_DIR"
 
@@ -138,6 +139,7 @@ fi
 if [ ! -f "./verify.sh" ]; then
   log "No verify.sh found in repo, using default template"
   cp /defaults/verify.sh ./verify.sh
+  USING_DEFAULT_VERIFY=true
 fi
 chmod +x ./verify.sh
 
@@ -228,6 +230,11 @@ done
 
 # ── 5. Collect results ─────────────────────────────────
 cd "$REPO_DIR"
+
+# If verify.sh was injected from the default template, do not include it in commits.
+if [ "$USING_DEFAULT_VERIFY" = true ]; then
+  rm -f ./verify.sh
+fi
 
 # Generate diff summary
 {
