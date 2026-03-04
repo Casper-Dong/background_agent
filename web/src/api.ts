@@ -32,7 +32,7 @@ export interface Artifact {
 }
 
 export interface JobLog {
-  id: number;
+  id: number | string;
   job_id: string;
   ts: string;
   level: string;

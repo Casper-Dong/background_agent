@@ -2,10 +2,10 @@ import { useEffect, useRef } from "react";
 import { JobLog } from "../api";
 
 const SOURCE_COLORS: Record<string, string> = {
-  agent: "#a78bfa",
-  verify: "#34d399",
-  sandbox: "#60a5fa",
-  system: "#9ca3af",
+  agent: "#8e5b30",
+  verify: "#247a53",
+  sandbox: "#6a5b48",
+  system: "#7b6852",
 };
 
 export function LogViewer({ logs }: { logs: JobLog[] }) {
