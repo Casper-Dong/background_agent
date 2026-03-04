@@ -1,0 +1,279 @@
+import { Job as BullJob } from "bullmq";
+import { config } from "./config";
+import { createWorker, JobPayload } from "./queue";
+import { getJob, updateJob, appendLog, createArtifact, pool } from "./db";
+import {
+  launchSandbox,
+  waitForSandbox,
+  removeSandbox,
+  cleanupStaleSandboxes,
+} from "./services/sandbox";
+import { getRepoCloneUrl, generateBranchName, createPullRequest, getPublicRepoUrl } from "./services/github";
+import * as slack from "./services/slack";
+import { logBus } from "./services/logs";
+
+console.log("[worker] Starting worker...");
+
+// ── Periodic cleanup of stale sandboxes ────────────────
+
+setInterval(() => {
+  cleanupStaleSandboxes().catch((err) =>
+    console.error("[worker] Cleanup error:", err.message)
+  );
+}, 10 * 60 * 1000); // Every 10 minutes
+
+// ── Main job processor ─────────────────────────────────
+
+const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
+  const { jobId } = bullJob.data;
+  console.log(`[worker] Processing job ${jobId}`);
+
+  const job = await getJob(jobId);
+  if (!job) {
+    console.error(`[worker] Job ${jobId} not found`);
+    return;
+  }
+
+  if (job.status === "cancelled") {
+    console.log(`[worker] Job ${jobId} was cancelled, skipping`);
+    return;
+  }
+
+  let containerId: string | undefined;
+
+  try {
+    // ── 1. Mark as running ───────────────────────────────
+
+    await updateJob(jobId, { status: "running", started_at: new Date() });
+    await log(jobId, "Job started", "info", "system");
+
+    // Notify Slack
+    if (job.slack_channel) {
+      try {
+        const threadTs = await slack.postMessage({
+          channel: job.slack_channel,
+          thread_ts: job.slack_thread_ts || undefined,
+          ...slack.formatJobProgress(0, job.max_iterations, "Starting sandbox..."),
+        });
+        if (!job.slack_thread_ts && threadTs) {
+          await updateJob(jobId, { slack_thread_ts: threadTs });
+        }
+      } catch (err: any) {
+        console.warn("[worker] Slack notification failed:", err.message);
+      }
+    }
+
+    // ── 2. Prepare branch ────────────────────────────────
+
+    const branch = generateBranchName(jobId);
+    await updateJob(jobId, { branch });
+    await log(jobId, `Branch: ${branch}`, "info", "system");
+
+    // ── 3. Launch sandbox ────────────────────────────────
+
+    const repoCloneUrl = await getRepoCloneUrl();
+    await log(jobId, "Launching sandbox container...", "info", "system");
+
+    const { containerId: cId } = await launchSandbox(
+      {
+        jobId,
+        task: job.task,
+        repoCloneUrl,
+        branch,
+        baseBranch: job.base_branch,
+        agentType: job.agent_type,
+        maxIterations: job.max_iterations,
+        timeoutSeconds: job.timeout_seconds,
+      },
+      // onLog callback — store in DB and broadcast via logBus
+      (line, source) => {
+        const logEntry = {
+          level: "info",
+          message: line,
+          source,
+          ts: new Date(),
+        };
+        appendLog(jobId, line, "info", source).catch(() => {});
+        logBus.publish(jobId, logEntry);
+      }
+    );
+
+    containerId = cId;
+    await updateJob(jobId, { container_id: containerId });
+    await log(jobId, `Sandbox container: ${containerId.slice(0, 12)}`, "info", "system");
+
+    // ── 4. Wait for sandbox to complete ──────────────────
+
+    const result = await waitForSandbox(containerId, job.timeout_seconds);
+
+    await log(jobId, `Sandbox exited with code ${result.exitCode}`, "info", "system");
+
+    // Store artifacts
+    if (result.diffSummary) {
+      await createArtifact({
+        job_id: jobId,
+        type: "diff",
+        name: "Changes diff",
+        content: result.diffSummary,
+      });
+    }
+    if (result.testOutput) {
+      await createArtifact({
+        job_id: jobId,
+        type: "test_output",
+        name: "Test output",
+        content: result.testOutput,
+      });
+    }
+
+    await updateJob(jobId, {
+      diff_summary: result.diffSummary || null,
+      test_output: result.testOutput || null,
+    });
+
+    // ── 5. Handle result ─────────────────────────────────
+
+    if (result.exitCode === 0) {
+      // Success — create PR
+      await updateJob(jobId, { status: "verifying" });
+      await log(jobId, "Sandbox succeeded, creating PR...", "info", "system");
+
+      let prUrl: string | null = null;
+      let prNumber: number | null = null;
+
+      if (config.GITHUB_TOKEN && config.GITHUB_OWNER && config.GITHUB_REPO) {
+        try {
+          const pr = await createPullRequest({
+            title: `[Agent] ${job.task.slice(0, 72)}`,
+            body: formatPrBody(job.task, jobId, result.diffSummary, result.testOutput),
+            head: branch,
+            base: job.base_branch,
+          });
+          prUrl = pr.url;
+          prNumber = pr.number;
+          await log(jobId, `PR created: ${prUrl}`, "info", "system");
+        } catch (err: any) {
+          await log(jobId, `PR creation failed: ${err.message}`, "warn", "system");
+          // Not fatal — sandbox already pushed the branch
+        }
+      } else {
+        await log(jobId, "GitHub not configured, skipping PR creation", "warn", "system");
+      }
+
+      await updateJob(jobId, {
+        status: "succeeded",
+        completed_at: new Date(),
+        pr_url: prUrl,
+        pr_number: prNumber,
+      });
+
+      await log(jobId, "Job completed successfully", "info", "system");
+
+      // Notify Slack
+      await notifySlackCompletion(job, "succeeded", prUrl);
+
+    } else {
+      // Failure
+      const errorMsg = result.error || `Sandbox exited with code ${result.exitCode}`;
+      await updateJob(jobId, {
+        status: "failed",
+        completed_at: new Date(),
+        error: errorMsg,
+      });
+      await log(jobId, `Job failed: ${errorMsg}`, "error", "system");
+
+      await notifySlackCompletion(job, "failed", null, errorMsg);
+    }
+
+    // Signal SSE clients that the job is done
+    logBus.emit(`job:${jobId}:done`, { status: (await getJob(jobId))?.status });
+
+  } catch (err: any) {
+    console.error(`[worker] Error processing job ${jobId}:`, err);
+
+    await updateJob(jobId, {
+      status: "failed",
+      completed_at: new Date(),
+      error: err.message,
+    });
+    await log(jobId, `Worker error: ${err.message}`, "error", "system");
+    logBus.emit(`job:${jobId}:done`, { status: "failed" });
+
+    await notifySlackCompletion(job, "failed", null, err.message);
+
+  } finally {
+    // Clean up sandbox container
+    if (containerId) {
+      await removeSandbox(containerId).catch((err) =>
+        console.warn("[worker] Failed to remove sandbox:", err.message)
+      );
+    }
+  }
+});
+
+// ── Helpers ────────────────────────────────────────────
+
+async function log(jobId: string, message: string, level: string, source: string) {
+  await appendLog(jobId, message, level, source);
+  logBus.publish(jobId, { level, message, source, ts: new Date() });
+}
+
+async function notifySlackCompletion(
+  job: any,
+  status: string,
+  prUrl?: string | null,
+  error?: string | null
+) {
+  if (!job.slack_channel) return;
+  try {
+    await slack.postMessage({
+      channel: job.slack_channel,
+      thread_ts: job.slack_thread_ts || undefined,
+      ...slack.formatJobCompleted({
+        jobId: job.id,
+        task: job.task,
+        status,
+        prUrl,
+        error,
+        webUrl: config.API_URL.replace(":3001", ":1259"),
+      }),
+    });
+  } catch (err: any) {
+    console.warn("[worker] Slack notification failed:", err.message);
+  }
+}
+
+function formatPrBody(
+  task: string,
+  jobId: string,
+  diffSummary?: string,
+  testOutput?: string
+): string {
+  let body = `## Task\n\n${task}\n\n`;
+  body += `> Generated by Background Agent (job \`${jobId.slice(0, 8)}\`)\n\n`;
+
+  if (diffSummary) {
+    body += `## Changes\n\n\`\`\`\n${diffSummary.slice(0, 3000)}\n\`\`\`\n\n`;
+  }
+
+  if (testOutput) {
+    body += `<details><summary>Test output</summary>\n\n\`\`\`\n${testOutput.slice(0, 5000)}\n\`\`\`\n\n</details>\n\n`;
+  }
+
+  body += `---\n*Automated by [Background Agent]*`;
+  return body;
+}
+
+// ── Graceful shutdown ──────────────────────────────────
+
+async function shutdown() {
+  console.log("[worker] Shutting down...");
+  await worker.close();
+  await pool.end();
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+console.log("[worker] Ready, waiting for jobs...");
