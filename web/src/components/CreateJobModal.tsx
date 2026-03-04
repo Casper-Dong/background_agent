@@ -8,7 +8,7 @@ interface Props {
 
 export function CreateJobModal({ onCreated, onClose }: Props) {
   const [task, setTask] = useState("");
-  const [agentType, setAgentType] = useState("mock");
+  const [agentType, setAgentType] = useState("auto");
   const [maxIterations, setMaxIterations] = useState(5);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,10 +20,14 @@ export function CreateJobModal({ onCreated, onClose }: Props) {
     setSubmitting(true);
     setError(null);
     try {
-      const job = await createJob(task.trim(), {
-        agent_type: agentType,
+      const opts: { agent_type?: string; max_iterations: number } = {
         max_iterations: maxIterations,
-      });
+      };
+      if (agentType !== "auto") {
+        opts.agent_type = agentType;
+      }
+
+      const job = await createJob(task.trim(), opts);
       onCreated(job);
     } catch (err: any) {
       setError(err.message);
@@ -54,10 +58,11 @@ export function CreateJobModal({ onCreated, onClose }: Props) {
             <div className="field">
               <label htmlFor="agent">Agent</label>
               <select id="agent" value={agentType} onChange={(e) => setAgentType(e.target.value)}>
-                <option value="mock">Mock (demo)</option>
-                <option value="claude-code">Claude Code</option>
+                <option value="auto">Auto (recommended)</option>
                 <option value="codex">OpenAI Codex</option>
+                <option value="claude-code">Claude Code</option>
                 <option value="opencode">OpenCode</option>
+                <option value="mock">Mock (demo)</option>
               </select>
             </div>
             <div className="field">

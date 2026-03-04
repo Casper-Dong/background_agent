@@ -24,7 +24,7 @@ const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().default(""),
   SLACK_SIGNING_SECRET: z.string().default(""),
 
-  AGENT_TYPE: z.enum(["claude-code", "codex", "opencode", "mock"]).default("mock"),
+  AGENT_TYPE: z.enum(["claude-code", "codex", "opencode", "mock"]).optional(),
   ANTHROPIC_API_KEY: z.string().default(""),
   OPENAI_API_KEY: z.string().default(""),
 
@@ -38,5 +38,21 @@ const envSchema = z.object({
   ),
 });
 
-export const config = envSchema.parse(process.env);
-export type Config = z.infer<typeof envSchema>;
+const parsedEnv = envSchema.parse(process.env);
+
+function resolveDefaultAgentType(): "claude-code" | "codex" | "opencode" | "mock" {
+  // Treat "mock" as fallback-only so a leftover demo setting does not
+  // silently disable real agents when API keys are configured.
+  if (parsedEnv.AGENT_TYPE && parsedEnv.AGENT_TYPE !== "mock") return parsedEnv.AGENT_TYPE;
+  if (parsedEnv.OPENAI_API_KEY) return "codex";
+  if (parsedEnv.ANTHROPIC_API_KEY) return "claude-code";
+  if (parsedEnv.AGENT_TYPE === "mock") return "mock";
+  return "mock";
+}
+
+export const config = {
+  ...parsedEnv,
+  AGENT_TYPE: resolveDefaultAgentType(),
+};
+
+export type Config = typeof config;

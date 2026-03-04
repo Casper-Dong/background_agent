@@ -21,10 +21,66 @@ log() {
   echo "[sandbox] $(date -u +%H:%M:%S) $*"
 }
 
+task_allows_docs_only() {
+  local task_lc
+  task_lc="$(echo "$TASK" | tr '[:upper:]' '[:lower:]')"
+  echo "$task_lc" | grep -Eq "(readme|docs|documentation|changelog|markdown|typo|comment)"
+}
+
+has_non_doc_changes() {
+  local changed_files has_non_doc
+  changed_files="$(
+    {
+      git diff --name-only "$BASE_BRANCH" 2>/dev/null || true
+      git ls-files --others --exclude-standard 2>/dev/null || true
+    } | sed '/^[[:space:]]*$/d' | sort -u
+  )"
+
+  # No files means no meaningful code changes.
+  if [ -z "$changed_files" ]; then
+    return 1
+  fi
+
+  has_non_doc=false
+  while IFS= read -r file; do
+    case "$file" in
+      *.md|*.mdx|*.txt|*.rst|*.adoc|docs/*)
+        ;;
+      *)
+        has_non_doc=true
+        break
+        ;;
+    esac
+  done <<< "$changed_files"
+
+  [ "$has_non_doc" = true ]
+}
+
 error_exit() {
   echo "$1" > "$RESULT_DIR/error.txt"
   log "ERROR: $1"
   exit 1
+}
+
+validate_agent_setup() {
+  case "$AGENT_TYPE" in
+    claude-code)
+      [ -n "${ANTHROPIC_API_KEY:-}" ] || error_exit "ANTHROPIC_API_KEY is required for AGENT_TYPE=claude-code"
+      command -v claude &> /dev/null || error_exit "Claude CLI not found in sandbox (install it in the sandbox image)"
+      ;;
+    codex)
+      [ -n "${OPENAI_API_KEY:-}" ] || error_exit "OPENAI_API_KEY is required for AGENT_TYPE=codex"
+      command -v codex &> /dev/null || error_exit "Codex CLI not found in sandbox (install it in the sandbox image)"
+      ;;
+    opencode)
+      command -v opencode &> /dev/null || error_exit "OpenCode CLI not found in sandbox (install it in the sandbox image)"
+      ;;
+    mock)
+      ;;
+    *)
+      error_exit "Unsupported AGENT_TYPE: $AGENT_TYPE"
+      ;;
+  esac
 }
 
 run_mock_agent() {
@@ -85,6 +141,9 @@ if [ ! -f "./verify.sh" ]; then
 fi
 chmod +x ./verify.sh
 
+# Validate agent availability/config before starting iteration loop.
+validate_agent_setup
+
 # ── 4. Agent loop ──────────────────────────────────────
 ITERATION=0
 VERIFY_OUTPUT=""
@@ -95,9 +154,17 @@ while [ "$ITERATION" -lt "$MAX_ITERATIONS" ]; do
   log "=== Iteration $ITERATION / $MAX_ITERATIONS ==="
 
   # Build the prompt — include prior verify failures as context
-  PROMPT="$TASK"
+  PROMPT="You are working inside a git repository.
+
+Task:
+$TASK
+
+Requirements:
+- Implement the requested behavior with concrete file edits.
+- Prefer production code/tests/config changes over docs-only edits.
+- Do not return success unless the repository changes actually implement the request."
   if [ -n "$VERIFY_OUTPUT" ]; then
-    PROMPT="$TASK
+    PROMPT="$PROMPT
 
 The previous iteration's verification failed with the following output:
 
@@ -112,35 +179,20 @@ Please fix the issues and try again."
 
   case "$AGENT_TYPE" in
     claude-code)
-      if command -v claude &> /dev/null; then
-        echo "[agent] Running Claude Code CLI..."
-        claude -p "$PROMPT" \
-          --allowedTools "Edit,Write,Bash(git *),Bash(npm *),Bash(node *),Bash(npx *),Bash(cat *),Bash(ls *),Bash(find *),Bash(grep *)" \
-          2>&1 || AGENT_EXIT=$?
-      else
-        log "claude CLI not found, falling back to mock"
-        run_mock_agent "$PROMPT"
-      fi
+      echo "[agent] Running Claude Code CLI..."
+      claude -p "$PROMPT" \
+        --allowedTools "Edit,Write,Bash(git *),Bash(npm *),Bash(node *),Bash(npx *),Bash(cat *),Bash(ls *),Bash(find *),Bash(grep *)" \
+        2>&1 || AGENT_EXIT=$?
       ;;
 
     codex)
-      if command -v codex &> /dev/null; then
-        echo "[agent] Running OpenAI Codex CLI..."
-        codex --quiet --approval-mode full-auto "$PROMPT" 2>&1 || AGENT_EXIT=$?
-      else
-        log "codex CLI not found, falling back to mock"
-        run_mock_agent "$PROMPT"
-      fi
+      echo "[agent] Running OpenAI Codex CLI..."
+      codex --quiet --approval-mode full-auto "$PROMPT" 2>&1 || AGENT_EXIT=$?
       ;;
 
     opencode)
-      if command -v opencode &> /dev/null; then
-        echo "[agent] Running OpenCode..."
-        echo "$PROMPT" | opencode 2>&1 || AGENT_EXIT=$?
-      else
-        log "opencode not found, falling back to mock"
-        run_mock_agent "$PROMPT"
-      fi
+      echo "[agent] Running OpenCode..."
+      echo "$PROMPT" | opencode 2>&1 || AGENT_EXIT=$?
       ;;
 
     mock|*)
@@ -149,7 +201,7 @@ Please fix the issues and try again."
   esac
 
   if [ "$AGENT_EXIT" -ne 0 ]; then
-    log "Agent exited with code $AGENT_EXIT"
+    error_exit "Agent exited with code $AGENT_EXIT"
   fi
 
   # ── Run verify ──────────────────────────────────────
@@ -213,7 +265,14 @@ Status: $STATUS_LABEL" 2>&1
   git push origin "$BRANCH" 2>&1 || error_exit "Failed to push branch"
   log "Push complete"
 else
+  if [ "$AGENT_SUCCESS" = true ]; then
+    error_exit "Agent reported success but produced no file changes"
+  fi
   log "No changes to commit"
+fi
+
+if [ "$AGENT_SUCCESS" = true ] && ! task_allows_docs_only && ! has_non_doc_changes; then
+  error_exit "Task appears feature/code-oriented but changes were docs-only"
 fi
 
 # ── 7. Exit ─────────────────────────────────────────────

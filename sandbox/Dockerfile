@@ -14,10 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
   && rm -rf /var/lib/apt/lists/*
 
-# ── Git config ──────────────────────────────────────────
-RUN git config --global user.email "agent@background-agent.local" \
- && git config --global user.name "Background Agent" \
- && git config --global init.defaultBranch main
+# ── Agent CLIs ──────────────────────────────────────────
+RUN npm install -g @openai/codex @anthropic-ai/claude-code
 
 # ── Create non-root user ────────────────────────────────
 RUN useradd -m -s /bin/bash agent
@@ -34,5 +32,10 @@ RUN chmod +x /defaults/verify.sh
 WORKDIR /workspace
 
 USER agent
+
+# ── Git config (must be after USER agent) ───────────────
+RUN git config --global user.email "agent@background-agent.local" \
+ && git config --global user.name "Background Agent" \
+ && git config --global init.defaultBranch main
 
 ENTRYPOINT ["/entrypoint.sh"]
