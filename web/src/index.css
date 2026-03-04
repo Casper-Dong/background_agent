@@ -68,11 +68,28 @@ a:hover {
 }
 
 .header-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  color: var(--text);
+}
+
+.header-logo-title {
   font-family: var(--font-serif);
   font-size: 24px;
   font-weight: 600;
-  color: var(--text);
   letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.header-logo-subtitle {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .header-nav {
@@ -323,15 +340,34 @@ a:hover {
 }
 
 /* ── Job Detail Layout ─────────────────────────────────── */
-.job-workspace {
+.job-detail-header {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+.job-chat-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
   align-items: start;
 }
 
-.job-main-pane {
+.job-chat-main {
   min-width: 0;
+}
+
+.job-side-panel {
+  position: sticky;
+  top: 88px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .back-link {
@@ -390,15 +426,16 @@ a:hover {
   gap: 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0;
+  background: #f6ede0;
 }
 
 .tab {
-  padding: 10px 16px;
+  padding: 10px 14px;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   display: flex;
@@ -429,11 +466,10 @@ a:hover {
 
 .log-viewer {
   background: #fff;
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border: none;
+  border-radius: 0;
   padding: 12px;
-  max-height: 620px;
+  max-height: calc(100vh - 220px);
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -472,11 +508,12 @@ a:hover {
 .log-warn .log-message { color: #8d6208; }
 
 .artifact-viewer {
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border: none;
+  border-radius: 0;
   padding: 16px;
   background: var(--card);
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
 }
 
 .code-block {
@@ -501,26 +538,26 @@ a:hover {
 
 /* ── Chat Sidebar ─────────────────────────────────────── */
 .chat-sidebar {
-  position: sticky;
-  top: 88px;
+  position: relative;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow);
-  min-height: 520px;
-  max-height: calc(100vh - 112px);
+  min-height: 640px;
+  max-height: calc(100vh - 188px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .chat-sidebar-header {
-  padding: 14px 14px 10px;
+  padding: 16px 18px 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: start;
   justify-content: space-between;
   gap: 12px;
+  background: linear-gradient(180deg, #fbf4ea 0%, #fff9f1 100%);
 }
 
 .chat-eyebrow {
@@ -532,7 +569,7 @@ a:hover {
 
 .chat-sidebar-header h2 {
   font-family: var(--font-serif);
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   line-height: 1.1;
 }
@@ -561,9 +598,9 @@ a:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-soft);
+  background: #f8efe2;
 }
 
 .chat-filter {
@@ -584,43 +621,47 @@ a:hover {
 }
 
 .chat-thread {
-  padding: 14px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   overflow-y: auto;
 }
 
 .chat-item {
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 10px 8px;
+  border-radius: 14px;
+  padding: 11px 12px 9px;
   background: #fff;
+  max-width: 88%;
+  width: fit-content;
 }
 
 .chat-user {
-  margin-left: 28px;
-  border-color: #e1bc9b;
+  margin-left: auto;
+  margin-right: 0;
+  border-color: #ddb290;
   background: #fff4e8;
 }
 
 .chat-message {
-  margin-right: 24px;
+  margin-right: auto;
 }
 
 .chat-thinking {
-  margin-right: 18px;
+  margin-right: auto;
   border-color: #d8c8b3;
-  background: #f7f1e8;
+  background: #f8f3eb;
 }
 
 .chat-tool {
-  margin-right: 8px;
+  margin-right: auto;
   border-color: #d3bba0;
   background: #fff8f1;
 }
 
 .chat-system {
+  margin-right: auto;
   border-style: dashed;
   border-color: #d8cbb9;
   background: #faf7f2;
@@ -650,8 +691,8 @@ a:hover {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .chat-tool .chat-body {
@@ -701,13 +742,23 @@ a:hover {
 
 /* ── Responsive ────────────────────────────────────────── */
 @media (max-width: 1120px) {
-  .job-workspace {
+  .job-chat-layout {
     grid-template-columns: 1fr;
+  }
+
+  .job-side-panel {
+    position: static;
   }
 
   .chat-sidebar {
     position: static;
+    min-height: 520px;
     max-height: 620px;
+  }
+
+  .log-viewer,
+  .artifact-viewer {
+    max-height: 460px;
   }
 }
 
@@ -716,8 +767,12 @@ a:hover {
     padding: 14px 16px;
   }
 
-  .header-logo {
+  .header-logo-title {
     font-size: 21px;
+  }
+
+  .header-logo-subtitle {
+    font-size: 11px;
   }
 
   .main {
@@ -746,8 +801,14 @@ a:hover {
   .chat-user,
   .chat-message,
   .chat-thinking,
-  .chat-tool {
+  .chat-tool,
+  .chat-system {
     margin-left: 0;
-    margin-right: 0;
+    margin-right: auto;
+    max-width: 100%;
+  }
+
+  .chat-user {
+    margin-left: auto;
   }
 }

@@ -6,7 +6,8 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="app">
       <header className="header">
         <Link to="/" className="header-logo">
-          Background Agent
+          <span className="header-logo-title">RUE</span>
+          <span className="header-logo-subtitle">Repo utility engineer</span>
         </Link>
         <nav className="header-nav">
           <Link to="/">Dashboard</Link>

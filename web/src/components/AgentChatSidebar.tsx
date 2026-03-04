@@ -117,7 +117,7 @@ function kindLabel(kind: ChatKind): string {
   if (kind === "tool") return "Tool Call";
   if (kind === "thinking") return "Thinking";
   if (kind === "system") return "System";
-  return "Message";
+  return "Assistant";
 }
 
 export function AgentChatSidebar({
@@ -161,8 +161,8 @@ export function AgentChatSidebar({
     <aside className="chat-sidebar">
       <div className="chat-sidebar-header">
         <div>
-          <p className="chat-eyebrow">Agent Stream</p>
-          <h2>Live Sidebar</h2>
+          <p className="chat-eyebrow">Live Agent Trace</p>
+          <h2>Conversation</h2>
         </div>
         <span className={`stream-badge ${isActive ? "stream-live" : "stream-idle"}`}>
           {isActive ? "Live" : "Idle"}

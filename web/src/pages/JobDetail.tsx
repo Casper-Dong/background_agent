@@ -59,52 +59,61 @@ export function JobDetail() {
 
   return (
     <div className="job-detail">
-      <div className="job-workspace">
-        <section className="job-main-pane">
-          <div className="job-detail-header">
-            <Link to="/" className="back-link">&larr; Back</Link>
-            <div className="job-detail-title">
-              <h1>{job.task}</h1>
-              <StatusBadge status={job.status} />
-            </div>
-            <div className="job-detail-meta">
-              <span>ID: {job.id.slice(0, 8)}</span>
-              <span>Agent: {job.agent_type}</span>
-              <span>Iterations: {job.iteration}/{job.max_iterations}</span>
-              {job.branch && <span>Branch: {job.branch}</span>}
-              <span>Created: {new Date(job.created_at).toLocaleString()}</span>
-            </div>
-          </div>
+      <div className="job-detail-header">
+        <Link to="/" className="back-link">&larr; Back</Link>
+        <div className="job-detail-title">
+          <h1>{job.task}</h1>
+          <StatusBadge status={job.status} />
+        </div>
+        <div className="job-detail-meta">
+          <span>ID: {job.id.slice(0, 8)}</span>
+          <span>Agent: {job.agent_type}</span>
+          <span>Iterations: {job.iteration}/{job.max_iterations}</span>
+          {job.branch && <span>Branch: {job.branch}</span>}
+          <span>Created: {new Date(job.created_at).toLocaleString()}</span>
+        </div>
+      </div>
 
-          <div className="job-detail-actions">
-            {isActive && (
-              <button
-                className="btn btn-danger"
-                onClick={handleCancel}
-                disabled={cancelling}
-              >
-                {cancelling ? "Cancelling..." : "Cancel Job"}
-              </button>
-            )}
-            {job.pr_url && (
-              <a href={job.pr_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
-                View PR #{job.pr_number}
-              </a>
-            )}
-          </div>
+      <div className="job-detail-actions">
+        {isActive && (
+          <button
+            className="btn btn-danger"
+            onClick={handleCancel}
+            disabled={cancelling}
+          >
+            {cancelling ? "Cancelling..." : "Cancel Job"}
+          </button>
+        )}
+        {job.pr_url && (
+          <a href={job.pr_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+            View PR #{job.pr_number}
+          </a>
+        )}
+      </div>
 
-          {job.error && (
-            <div className="job-error">
-              <strong>Error:</strong> {job.error}
-            </div>
-          )}
+      {job.error && (
+        <div className="job-error">
+          <strong>Error:</strong> {job.error}
+        </div>
+      )}
 
+      <div className="job-chat-layout">
+        <section className="job-chat-main">
+          <AgentChatSidebar
+            job={job}
+            logs={logs}
+            isActive={isActive}
+            streamError={streamError}
+          />
+        </section>
+
+        <aside className="job-side-panel">
           <div className="tabs">
             <button
               className={`tab ${activeTab === "logs" ? "tab-active" : ""}`}
               onClick={() => setActiveTab("logs")}
             >
-              Raw Logs {isActive && <span className="pulse" />}
+              Logs {isActive && <span className="pulse" />}
             </button>
             <button
               className={`tab ${activeTab === "diff" ? "tab-active" : ""}`}
@@ -143,14 +152,7 @@ export function JobDetail() {
               </div>
             )}
           </div>
-        </section>
-
-        <AgentChatSidebar
-          job={job}
-          logs={logs}
-          isActive={isActive}
-          streamError={streamError}
-        />
+        </aside>
       </div>
     </div>
   );
