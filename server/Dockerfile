@@ -13,6 +13,9 @@ RUN npm run build
 # Remove dev dependencies for smaller image
 RUN npm prune --production
 
-EXPOSE 3001
+ARG API_PORT=3001
+ENV API_PORT=${API_PORT}
+
+EXPOSE ${API_PORT}
 
 CMD ["node", "dist/index.js"]

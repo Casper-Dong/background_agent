@@ -73,30 +73,50 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
 
     const repoCloneUrl = await getRepoCloneUrl();
     await log(jobId, "Launching sandbox container...", "info", "system");
-
-    const { containerId: cId } = await launchSandbox(
-      {
-        jobId,
-        task: job.task,
-        repoCloneUrl,
-        branch,
-        baseBranch: job.base_branch,
-        agentType: job.agent_type,
-        maxIterations: job.max_iterations,
-        timeoutSeconds: job.timeout_seconds,
-      },
-      // onLog callback — store in DB and broadcast via logBus
-      (line, source) => {
-        const logEntry = {
-          level: "info",
-          message: line,
-          source,
-          ts: new Date(),
-        };
-        appendLog(jobId, line, "info", source).catch(() => {});
-        logBus.publish(jobId, logEntry);
+    const maxLaunchAttempts = 3;
+    let cId: string | undefined;
+    for (let attempt = 1; attempt <= maxLaunchAttempts; attempt++) {
+      try {
+        const launched = await launchSandbox(
+          {
+            jobId,
+            task: job.task,
+            repoCloneUrl,
+            branch,
+            baseBranch: job.base_branch,
+            agentType: job.agent_type,
+            maxIterations: job.max_iterations,
+            timeoutSeconds: job.timeout_seconds,
+          },
+          // onLog callback — store in DB and broadcast via logBus
+          (line, source) => {
+            const logEntry = {
+              level: "info",
+              message: line,
+              source,
+              ts: new Date(),
+            };
+            appendLog(jobId, line, "info", source).catch(() => {});
+            logBus.publish(jobId, logEntry);
+          }
+        );
+        cId = launched.containerId;
+        break;
+      } catch (err: any) {
+        const transient = isTransientDockerLaunchError(err);
+        if (!transient || attempt === maxLaunchAttempts) {
+          throw err;
+        }
+        await log(
+          jobId,
+          `Sandbox launch failed (attempt ${attempt}/${maxLaunchAttempts}): ${err.message}. Retrying...`,
+          "warn",
+          "system"
+        );
+        await sleep(1500 * attempt);
       }
-    );
+    }
+    if (!cId) throw new Error("Sandbox launch failed after retries");
 
     containerId = cId;
     await updateJob(jobId, { container_id: containerId });
@@ -262,6 +282,21 @@ function formatPrBody(
 
   body += `---\n*Automated by [Background Agent]*`;
   return body;
+}
+
+function isTransientDockerLaunchError(err: any): boolean {
+  const message = String(err?.message || "").toLowerCase();
+  return (
+    message.includes("socket hang up") ||
+    message.includes("econnreset") ||
+    message.includes("econnrefused") ||
+    message.includes("timed out") ||
+    (message.includes("no such container") && message.includes("page not found"))
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ── Graceful shutdown ──────────────────────────────────

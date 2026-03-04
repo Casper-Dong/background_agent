@@ -31,6 +31,7 @@ const envSchema = z.object({
   SANDBOX_IMAGE: z.string().default("background-agent-sandbox"),
   SANDBOX_TIMEOUT_SECONDS: z.coerce.number().default(1800),
   SANDBOX_MAX_ITERATIONS: z.coerce.number().default(5),
+  SANDBOX_CPU_LIMIT: z.coerce.number().default(1),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   DOCKER_HOST: z.string().default(""),
   DOCKER_TLS_VERIFY: z.string().default(""),

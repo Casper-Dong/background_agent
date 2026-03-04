@@ -8,5 +8,6 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx-spa.conf /etc/nginx/conf.d/default.conf
+ENV API_PORT=3001
+COPY nginx-spa.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80

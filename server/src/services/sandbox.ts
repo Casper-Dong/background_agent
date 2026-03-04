@@ -5,6 +5,7 @@ import { PassThrough } from "stream";
 import { config } from "../config";
 
 const docker = createDockerClient();
+let cachedHostCpuCount: number | null | undefined;
 
 export interface SandboxOptions {
   jobId: string;
@@ -47,66 +48,90 @@ export async function launchSandbox(
     envVars.push(`OPENAI_API_KEY=${config.OPENAI_API_KEY}`);
   }
 
-  const container = await docker.createContainer({
-    Image: config.SANDBOX_IMAGE,
-    Env: envVars,
-    HostConfig: {
-      // Resource limits
-      Memory: 4 * 1024 * 1024 * 1024, // 4 GB
-      NanoCpus: 2_000_000_000,         // 2 CPUs
-      PidsLimit: 256,
-      // Network: allow for git clone / npm install
-      NetworkMode: "bridge",
-      // Security
-      ReadonlyRootfs: false,
-      SecurityOpt: ["no-new-privileges"],
-      CapDrop: ["ALL"],
-      CapAdd: ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"],
-    },
-    Labels: {
-      "background-agent.job-id": opts.jobId,
-      "background-agent.managed": "true",
-    },
-    StopTimeout: 10,
-  });
+  const requestedCpus = sanitizeCpuLimit(config.SANDBOX_CPU_LIMIT);
+  const hostCpuCount = await getDockerHostCpuCount();
+  const effectiveCpus = hostCpuCount ? Math.min(requestedCpus, hostCpuCount) : requestedCpus;
+  if (hostCpuCount && effectiveCpus < requestedCpus) {
+    onLog(
+      `[sandbox] Clamped CPU limit from ${requestedCpus} to ${effectiveCpus} (host has ${hostCpuCount})`,
+      "sandbox"
+    );
+  }
+  const nanoCpus = Math.round(effectiveCpus * 1_000_000_000);
 
-  await container.start();
+  let stage = "create";
+  let container: Docker.Container | undefined;
 
-  // Attach to log stream
-  const logStream = await container.logs({
-    follow: true,
-    stdout: true,
-    stderr: true,
-    timestamps: true,
-  });
+  try {
+    container = await docker.createContainer({
+      Image: config.SANDBOX_IMAGE,
+      Env: envVars,
+      HostConfig: {
+        // Resource limits
+        Memory: 4 * 1024 * 1024 * 1024, // 4 GB
+        NanoCpus: nanoCpus,
+        PidsLimit: 256,
+        // Network: allow for git clone / npm install
+        NetworkMode: "bridge",
+        // Security
+        ReadonlyRootfs: false,
+        SecurityOpt: ["no-new-privileges"],
+        CapDrop: ["ALL"],
+        CapAdd: ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"],
+      },
+      Labels: {
+        "background-agent.job-id": opts.jobId,
+        "background-agent.managed": "true",
+      },
+      StopTimeout: 10,
+    });
 
-  // Docker multiplexed stream → line-by-line
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  docker.modem.demuxStream(logStream as any, stdout, stderr);
+    stage = "start";
+    await container.start();
 
-  let buffer = "";
-  const processChunk = (chunk: Buffer) => {
-    buffer += chunk.toString("utf-8");
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const source = detectLogSource(line);
-      onLog(line, source);
+    stage = "logs";
+    // Attach to log stream
+    const logStream = await container.logs({
+      follow: true,
+      stdout: true,
+      stderr: true,
+      timestamps: true,
+    });
+
+    // Docker multiplexed stream → line-by-line
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    docker.modem.demuxStream(logStream as any, stdout, stderr);
+
+    let buffer = "";
+    const processChunk = (chunk: Buffer) => {
+      buffer += chunk.toString("utf-8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const source = detectLogSource(line);
+        onLog(line, source);
+      }
+    };
+
+    stdout.on("data", processChunk);
+    stderr.on("data", processChunk);
+
+    stdout.on("end", () => {
+      if (buffer.trim()) {
+        onLog(buffer, detectLogSource(buffer));
+      }
+    });
+
+    return { containerId: container.id };
+  } catch (err: any) {
+    // If launch fails after create, best-effort cleanup to avoid leaked containers.
+    if (container?.id) {
+      try { await container.remove({ force: true, v: true }); } catch {}
     }
-  };
-
-  stdout.on("data", processChunk);
-  stderr.on("data", processChunk);
-
-  stdout.on("end", () => {
-    if (buffer.trim()) {
-      onLog(buffer, detectLogSource(buffer));
-    }
-  });
-
-  return { containerId: container.id };
+    throw enrichDockerError(err, `launch:${stage}`);
+  }
 }
 
 export async function waitForSandbox(
@@ -161,7 +186,7 @@ export async function stopSandbox(containerId: string): Promise<void> {
     const container = docker.getContainer(containerId);
     await container.stop({ t: 5 });
   } catch (err: any) {
-    if (!err.message?.includes("not running")) {
+    if (!err.message?.includes("not running") && !isNotFoundError(err)) {
       throw err;
     }
   }
@@ -172,7 +197,7 @@ export async function removeSandbox(containerId: string): Promise<void> {
     const container = docker.getContainer(containerId);
     await container.remove({ force: true, v: true });
   } catch (err: any) {
-    if (!err.message?.includes("No such container")) {
+    if (!isNotFoundError(err)) {
       console.error(`[sandbox] Failed to remove container ${containerId}:`, err.message);
     }
   }
@@ -228,9 +253,33 @@ function detectLogSource(line: string): string {
   return "system";
 }
 
+async function getDockerHostCpuCount(): Promise<number | undefined> {
+  if (cachedHostCpuCount !== undefined) {
+    return cachedHostCpuCount ?? undefined;
+  }
+
+  try {
+    const info = await docker.info();
+    const cpuCount = Number((info as any).NCPU);
+    if (Number.isFinite(cpuCount) && cpuCount > 0) {
+      cachedHostCpuCount = cpuCount;
+      return cpuCount;
+    }
+  } catch {}
+
+  cachedHostCpuCount = null;
+  return undefined;
+}
+
+function sanitizeCpuLimit(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const rounded = Math.round(value * 100) / 100;
+  return Math.max(0.01, rounded);
+}
+
 function createDockerClient(): Docker {
   const dockerHost = config.DOCKER_HOST.trim();
-  const apiVersion = config.DOCKER_API_VERSION.trim() || undefined;
+  const apiVersion = normalizeDockerApiVersion(config.DOCKER_API_VERSION.trim() || undefined);
 
   if (!dockerHost) {
     const localOptions: DockerOptions = { socketPath: config.DOCKER_SOCKET };
@@ -347,4 +396,25 @@ function isTruthy(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
   return !["0", "false", "no", "off"].includes(normalized);
+}
+
+function normalizeDockerApiVersion(version?: string): string | undefined {
+  if (!version) return undefined;
+  return version.startsWith("v") ? version : `v${version}`;
+}
+
+function isNotFoundError(err: any): boolean {
+  const message = String(err?.message || "").toLowerCase();
+  const reason = String(err?.reason || "").toLowerCase();
+  return err?.statusCode === 404
+    || reason.includes("no such container")
+    || message.includes("no such container")
+    || message.includes("page not found");
+}
+
+function enrichDockerError(err: any, stage: string): Error {
+  const msg = String(err?.message || err || "Unknown docker error");
+  const status = err?.statusCode ? ` status=${err.statusCode}` : "";
+  const reason = err?.reason ? ` reason=${err.reason}` : "";
+  return new Error(`[docker ${stage}] ${msg}${status}${reason}`);
 }
