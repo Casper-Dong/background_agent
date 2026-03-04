@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { config } from "../config";
-import { createJob } from "../db";
+import { createJob, updateJob } from "../db";
 import { jobQueue } from "../queue";
 import * as slackService from "../services/slack";
 
@@ -72,32 +72,25 @@ slackRouter.post("/commands", verifySlackSignature, async (req: Request, res: Re
     // Create job asynchronously
     setImmediate(async () => {
       try {
-        // Post initial message to get thread_ts
-        const threadTs = await slackService.postMessage({
-          channel: channel_id,
-          ...slackService.formatJobStarted("...", task, config.API_URL.replace("/api", "")),
-        });
-
         const job = await createJob({
           task,
           slack_channel: channel_id,
-          slack_thread_ts: threadTs,
           created_by: user_name || user_id,
         });
 
-        // Update the Slack message with real job ID
-        if (threadTs) {
-          const { text, blocks } = slackService.formatJobStarted(
+        // Best-effort Slack thread bootstrapping. Job creation/queue should
+        // still succeed even if chat:write scope isn't installed yet.
+        const threadTs = await slackService.postMessage({
+          channel: channel_id,
+          ...slackService.formatJobStarted(
             job.id,
             task,
             config.API_URL.replace(":3001", ":1259")
-          );
-          await slackService.updateMessage({
-            channel: channel_id,
-            ts: threadTs,
-            text,
-            blocks,
-          });
+          ),
+        });
+
+        if (threadTs) {
+          await updateJob(job.id, { slack_thread_ts: threadTs });
         }
 
         await jobQueue.add("run-agent", { jobId: job.id }, { jobId: job.id });

@@ -3,18 +3,18 @@
 # Replace YOUR_DOMAIN with your actual API endpoint.
 
 display_information:
-  name: Background Agent
-  description: Run coding agent tasks from Slack
-  background_color: "#4A154B"
+  name: RUE
+  description: Repo Utility Engineer
+  background_color: "#C9733E"
 
 features:
   bot_user:
-    display_name: Background Agent
+    display_name: RUE
     always_online: true
   slash_commands:
     - command: /inspect
       url: https://YOUR_DOMAIN/api/slack/commands
-      description: Start a background coding agent task
+      description: Start a repo utility task
       usage_hint: "[task description]"
       should_escape: false
 

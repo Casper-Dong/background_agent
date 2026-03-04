@@ -23,14 +23,19 @@ export async function postMessage(params: {
     return undefined;
   }
 
-  const result = await slack.chat.postMessage({
-    channel: params.channel,
-    text: params.text,
-    thread_ts: params.thread_ts,
-    blocks: params.blocks as any,
-    unfurl_links: false,
-  });
-  return result.ts;
+  try {
+    const result = await slack.chat.postMessage({
+      channel: params.channel,
+      text: params.text,
+      thread_ts: params.thread_ts,
+      blocks: params.blocks as any,
+      unfurl_links: false,
+    });
+    return result.ts;
+  } catch (err: any) {
+    console.warn("[slack] chat.postMessage failed:", err?.data?.error || err.message);
+    return undefined;
+  }
 }
 
 export async function updateMessage(params: {
@@ -42,12 +47,16 @@ export async function updateMessage(params: {
   const slack = getClient();
   if (!slack) return;
 
-  await slack.chat.update({
-    channel: params.channel,
-    ts: params.ts,
-    text: params.text,
-    blocks: params.blocks as any,
-  });
+  try {
+    await slack.chat.update({
+      channel: params.channel,
+      ts: params.ts,
+      text: params.text,
+      blocks: params.blocks as any,
+    });
+  } catch (err: any) {
+    console.warn("[slack] chat.update failed:", err?.data?.error || err.message);
+  }
 }
 
 export function formatJobStarted(jobId: string, task: string, webUrl: string): {
