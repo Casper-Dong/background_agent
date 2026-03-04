@@ -56,6 +56,22 @@ docker compose exec worker ls -la /var/run/docker.sock
 #   user: "1000:$(getent group docker | cut -d: -f3)"
 ```
 
+If you are using a remote Docker daemon (`DOCKER_HOST`), this section does not apply. Instead,
+verify remote connectivity:
+
+```bash
+# From inside the worker container
+docker compose exec worker sh -lc 'echo "$DOCKER_HOST"'
+
+# Confirm TLS/certs are loaded when required
+docker compose exec worker sh -lc 'env | grep "^DOCKER_"'
+```
+
+Common remote errors:
+- `connect ECONNREFUSED ...`: wrong host/port or daemon not listening on TCP.
+- `x509: certificate signed by unknown authority`: missing/incorrect `DOCKER_TLS_CA_PEM` or `DOCKER_CERT_PATH/ca.pem`.
+- `remote error: tls: bad certificate`: wrong client cert/key pair.
+
 ## SSE log stream disconnects
 
 **Cause**: Proxy timeout or buffering.

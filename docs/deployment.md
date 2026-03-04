@@ -6,6 +6,7 @@
 - Docker + Docker Compose v2
 - A domain with DNS pointed at the VPS
 - TLS termination (Caddy, Certbot, or cloud LB)
+- Optional: a remote Docker daemon endpoint (for example Fly.io-hosted)
 
 ## Steps
 
@@ -45,6 +46,48 @@ docker build -t background-agent-sandbox ./sandbox
 
 # Start all services (with nginx proxy)
 docker compose --profile with-proxy up --build -d
+```
+
+### 4b. Use a remote Docker daemon (Fly.io or similar)
+
+If you want the worker to launch sandbox containers on a remote Docker host instead of local
+`/var/run/docker.sock`, set these environment variables:
+
+```bash
+# Keep local socket configured as fallback
+DOCKER_SOCKET=/var/run/docker.sock
+
+# Remote daemon endpoint
+DOCKER_HOST=tcp://your-fly-docker-host.internal:2376
+
+# TLS (set to 1 for secure daemons)
+DOCKER_TLS_VERIFY=1
+
+# Provide certs either by path...
+DOCKER_CERT_PATH=/etc/docker-certs
+
+# ...or directly as secrets (raw PEM with \n or base64)
+DOCKER_TLS_CA_PEM=
+DOCKER_TLS_CERT_PEM=
+DOCKER_TLS_KEY_PEM=
+
+# Optional, if daemon expects a specific API version
+DOCKER_API_VERSION=1.43
+```
+
+Notes:
+- When `DOCKER_HOST` is set, the worker connects to that daemon and does not require local socket access.
+- For Fly deployment, store PEM values in Fly secrets and expose them as env vars to the worker process.
+- Ensure the remote daemon can pull `background-agent-sandbox` and has outbound internet for git/npm.
+
+Fly secret example:
+```bash
+fly secrets set \
+  DOCKER_HOST=tcp://your-fly-docker-host.internal:2376 \
+  DOCKER_TLS_VERIFY=1 \
+  DOCKER_TLS_CA_PEM="$(cat ca.pem)" \
+  DOCKER_TLS_CERT_PEM="$(cat cert.pem)" \
+  DOCKER_TLS_KEY_PEM="$(cat key.pem)"
 ```
 
 ### 5. TLS with Caddy (recommended)

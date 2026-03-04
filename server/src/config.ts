@@ -32,6 +32,13 @@ const envSchema = z.object({
   SANDBOX_TIMEOUT_SECONDS: z.coerce.number().default(1800),
   SANDBOX_MAX_ITERATIONS: z.coerce.number().default(5),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
+  DOCKER_HOST: z.string().default(""),
+  DOCKER_TLS_VERIFY: z.string().default(""),
+  DOCKER_CERT_PATH: z.string().default(""),
+  DOCKER_TLS_CA_PEM: z.string().default(""),
+  DOCKER_TLS_CERT_PEM: z.string().default(""),
+  DOCKER_TLS_KEY_PEM: z.string().default(""),
+  DOCKER_API_VERSION: z.string().default(""),
 
   COMMAND_ALLOWLIST: z.string().default(
     "git,node,npm,npx,pnpm,yarn,python,python3,pip,docker,docker-compose,make,cargo,go,cat,ls,echo,mkdir,cp,mv,rm,chmod,grep,find,sed,awk,head,tail,wc,sort,uniq,diff,patch,curl,wget,tar,unzip,jq"

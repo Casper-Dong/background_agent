@@ -44,6 +44,7 @@ open http://localhost:1259
 - **GitHub integration**: Creates branches and opens PRs automatically
 - **Security**: Secret redaction, resource limits, capability restrictions
 - **Reliability**: Job timeouts, cancellation, stale container cleanup
+- **Flexible sandbox runtime**: Local Docker socket or remote Docker host via `DOCKER_HOST`
 
 ## Agent Types
 

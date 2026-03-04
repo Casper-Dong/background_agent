@@ -1,8 +1,10 @@
-import Docker from "dockerode";
+import fs from "fs";
+import path from "path";
+import Docker, { DockerOptions } from "dockerode";
 import { PassThrough } from "stream";
 import { config } from "../config";
 
-const docker = new Docker({ socketPath: config.DOCKER_SOCKET });
+const docker = createDockerClient();
 
 export interface SandboxOptions {
   jobId: string;
@@ -224,4 +226,125 @@ function detectLogSource(line: string): string {
   if (line.includes("[verify]")) return "verify";
   if (line.includes("[sandbox]")) return "sandbox";
   return "system";
+}
+
+function createDockerClient(): Docker {
+  const dockerHost = config.DOCKER_HOST.trim();
+  const apiVersion = config.DOCKER_API_VERSION.trim() || undefined;
+
+  if (!dockerHost) {
+    const localOptions: DockerOptions = { socketPath: config.DOCKER_SOCKET };
+    if (apiVersion) localOptions.version = apiVersion;
+    console.log(`[sandbox] Docker client configured for local socket ${config.DOCKER_SOCKET}`);
+    return new Docker(localOptions);
+  }
+
+  if (dockerHost.startsWith("unix://")) {
+    const socketPath = dockerHost.slice("unix://".length);
+    const unixOptions: DockerOptions = { socketPath };
+    if (apiVersion) unixOptions.version = apiVersion;
+    console.log(`[sandbox] Docker client configured for unix socket ${socketPath}`);
+    return new Docker(unixOptions);
+  }
+
+  const remoteOptions = buildRemoteDockerOptions(dockerHost, apiVersion);
+  console.log(
+    `[sandbox] Docker client configured for remote ${remoteOptions.protocol}://${remoteOptions.host}:${remoteOptions.port}`
+  );
+  return new Docker(remoteOptions);
+}
+
+function buildRemoteDockerOptions(dockerHost: string, apiVersion?: string): DockerOptions {
+  const normalizedHost = dockerHost.startsWith("tcp://")
+    ? `http://${dockerHost.slice("tcp://".length)}`
+    : dockerHost;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizedHost);
+  } catch {
+    throw new Error(`Invalid DOCKER_HOST value: ${dockerHost}`);
+  }
+
+  const scheme = parsed.protocol.replace(":", "");
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error(
+      `Unsupported DOCKER_HOST protocol "${parsed.protocol}". Use tcp://, http://, https://, or unix://`
+    );
+  }
+
+  const tlsVerify = isTruthy(config.DOCKER_TLS_VERIFY);
+  const useTls = scheme === "https" || tlsVerify;
+  const protocol = useTls ? "https" : "http";
+  const host = parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : useTls ? 2376 : 2375;
+
+  if (!host) {
+    throw new Error(`Invalid DOCKER_HOST value: ${dockerHost}`);
+  }
+
+  const options: DockerOptions = { protocol, host, port };
+  if (apiVersion) options.version = apiVersion;
+
+  const tlsMaterial = loadTlsMaterial();
+  if (tlsMaterial.ca) options.ca = tlsMaterial.ca;
+  if (tlsMaterial.cert) options.cert = tlsMaterial.cert;
+  if (tlsMaterial.key) options.key = tlsMaterial.key;
+
+  return options;
+}
+
+function loadTlsMaterial(): { ca?: Buffer; cert?: Buffer; key?: Buffer } {
+  const envCa = parsePem(config.DOCKER_TLS_CA_PEM);
+  const envCert = parsePem(config.DOCKER_TLS_CERT_PEM);
+  const envKey = parsePem(config.DOCKER_TLS_KEY_PEM);
+
+  const certPath = config.DOCKER_CERT_PATH.trim();
+  if (!certPath) {
+    return { ca: envCa, cert: envCert, key: envKey };
+  }
+
+  return {
+    ca: envCa ?? readFileIfExists(path.join(certPath, "ca.pem")),
+    cert: envCert ?? readFileIfExists(path.join(certPath, "cert.pem")),
+    key: envKey ?? readFileIfExists(path.join(certPath, "key.pem")),
+  };
+}
+
+function parsePem(value: string): Buffer | undefined {
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+
+  const multiline = normalized.includes("\\n")
+    ? normalized.replace(/\\n/g, "\n")
+    : normalized;
+
+  if (multiline.includes("BEGIN")) {
+    return Buffer.from(multiline, "utf-8");
+  }
+
+  // Allow passing PEM data as base64 for env-secret systems.
+  try {
+    const decoded = Buffer.from(multiline, "base64").toString("utf-8");
+    if (decoded.includes("BEGIN")) {
+      return Buffer.from(decoded, "utf-8");
+    }
+  } catch {}
+
+  return Buffer.from(multiline, "utf-8");
+}
+
+function readFileIfExists(filePath: string): Buffer | undefined {
+  try {
+    if (!fs.existsSync(filePath)) return undefined;
+    return fs.readFileSync(filePath);
+  } catch {
+    return undefined;
+  }
+}
+
+function isTruthy(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  return !["0", "false", "no", "off"].includes(normalized);
 }
