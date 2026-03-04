@@ -18,13 +18,15 @@ export function JobDetail() {
   const isActive = !!job && !TERMINAL_STATUSES.includes(job.status);
   const { logs, isDone, error: streamError } = useLogStream(id, !!id, isActive);
 
-  const fetchJob = useCallback(async () => {
-    if (!id) return;
+  const fetchJob = useCallback(async (): Promise<Job | null> => {
+    if (!id) return null;
     try {
       const data = await getJob(id);
       setJob(data);
+      return data;
     } catch (err) {
       console.error("Failed to fetch job:", err);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -41,17 +43,40 @@ export function JobDetail() {
     if (isDone) fetchJob();
   }, [isDone, fetchJob]);
 
-  async function handleCancel() {
-    if (!job || cancelling) return;
+  async function handleCancel(): Promise<boolean> {
+    if (!job || cancelling) return false;
+    if (TERMINAL_STATUSES.includes(job.status)) return true;
+
     setCancelling(true);
+    const maxAttempts = 3;
+
     try {
-      const updated = await cancelJob(job.id);
-      setJob(updated);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const updated = await cancelJob(job.id);
+          setJob(updated);
+          return true;
+        } catch (err) {
+          console.error(`Cancel attempt ${attempt}/${maxAttempts} failed:`, err);
+
+          const latest = await fetchJob();
+          if (latest && TERMINAL_STATUSES.includes(latest.status)) {
+            return true;
+          }
+
+          if (attempt < maxAttempts) {
+            await sleep(500 * attempt);
+          }
+        }
+      }
     } catch (err) {
       console.error("Failed to cancel:", err);
+      return false;
     } finally {
       setCancelling(false);
     }
+
+    return false;
   }
 
   if (loading) return <div className="loading">Loading job...</div>;
@@ -78,7 +103,9 @@ export function JobDetail() {
         {isActive && (
           <button
             className="btn btn-danger"
-            onClick={handleCancel}
+            onClick={() => {
+              void handleCancel();
+            }}
             disabled={cancelling}
           >
             {cancelling ? "Cancelling..." : "Cancel Job"}
@@ -104,6 +131,8 @@ export function JobDetail() {
             logs={logs}
             isActive={isActive}
             streamError={streamError}
+            onDeny={handleCancel}
+            isDenying={cancelling}
           />
         </section>
 
@@ -156,4 +185,8 @@ export function JobDetail() {
       </div>
     </div>
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

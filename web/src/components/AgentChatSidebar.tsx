@@ -3,6 +3,14 @@ import { Job, JobLog } from "../api";
 
 type ChatKind = "message" | "tool" | "thinking" | "system";
 type ChatFilter = "all" | ChatKind;
+type ConfirmationState =
+  | "pending"
+  | "allow-once"
+  | "always-allow"
+  | "denying"
+  | "retrying"
+  | "denied"
+  | "error";
 
 interface ChatEvent {
   key: string;
@@ -47,6 +55,8 @@ const SYSTEM_PATTERNS = [
   /\bsandbox exited\b/i,
   /\bjob completed\b/i,
   /\bjob failed\b/i,
+  /\bexecution summary\b/i,
+  /\bplanned approach\b/i,
   /\bpr created\b/i,
   /\bbranch:\b/i,
   /\bsandbox container\b/i,
@@ -125,14 +135,31 @@ export function AgentChatSidebar({
   logs,
   isActive,
   streamError,
+  onDeny,
+  isDenying,
 }: {
   job: Job;
   logs: JobLog[];
   isActive: boolean;
   streamError: string | null;
+  onDeny?: () => Promise<boolean> | boolean;
+  isDenying?: boolean;
 }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
+  const [confirmation, setConfirmation] = useState<ConfirmationState>("pending");
+  const [confirmationNote, setConfirmationNote] = useState<string>("");
   const threadRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const alwaysAllow = window.localStorage.getItem("rue.alwaysAllow");
+    if (alwaysAllow === "1") {
+      setConfirmation("always-allow");
+      setConfirmationNote("Auto-approved for this browser.");
+      return;
+    }
+    setConfirmation("pending");
+    setConfirmationNote("");
+  }, [job.id]);
 
   const events = useMemo(() => logs.map(toChatEvent), [logs]);
   const filteredEvents = useMemo(
@@ -156,6 +183,88 @@ export function AgentChatSidebar({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [filteredEvents.length, isActive]);
+
+  async function handleDeny() {
+    if (!isActive) {
+      setConfirmation("denied");
+      setConfirmationNote("Run already ended.");
+      return;
+    }
+
+    if (!onDeny) {
+      setConfirmation("error");
+      setConfirmationNote("Deny action is not wired.");
+      return;
+    }
+
+    setConfirmation("denying");
+    setConfirmationNote("Sending deny...");
+
+    const firstTry = await onDeny();
+    if (firstTry) {
+      setConfirmation("denied");
+      setConfirmationNote("Denied and cancellation requested.");
+      return;
+    }
+
+    setConfirmation("retrying");
+    setConfirmationNote("First deny attempt failed. Retrying...");
+    await sleep(600);
+    const secondTry = await onDeny();
+    if (secondTry) {
+      setConfirmation("denied");
+      setConfirmationNote("Denied on retry.");
+      return;
+    }
+
+    setConfirmation("error");
+    setConfirmationNote("Deny failed after retry. Press Deny again.");
+  }
+
+  function handleAllowOnce() {
+    setConfirmation("allow-once");
+    setConfirmationNote("Approved for this run.");
+  }
+
+  function handleAlwaysAllow() {
+    window.localStorage.setItem("rue.alwaysAllow", "1");
+    setConfirmation("always-allow");
+    setConfirmationNote("Auto-approve enabled in this browser.");
+  }
+
+  useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      return tag === "input" || tag === "textarea" || target.isContentEditable;
+    }
+
+    async function onKeyDown(event: KeyboardEvent) {
+      if (isEditableTarget(event.target)) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        await handleDeny();
+        return;
+      }
+
+      if (event.key !== "Enter") return;
+
+      if (event.metaKey) {
+        event.preventDefault();
+        handleAlwaysAllow();
+        return;
+      }
+
+      if (!event.ctrlKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        handleAllowOnce();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isActive, onDeny]);
 
   return (
     <aside className="chat-sidebar">
@@ -229,6 +338,56 @@ export function AgentChatSidebar({
 
         {streamError && <div className="chat-stream-error">Stream error: {streamError}</div>}
       </div>
+
+      <div className="chat-confirmation">
+        <div className="chat-confirmation-head">
+          <p>Confirmation</p>
+          <span className={`confirmation-state state-${confirmation}`}>
+            {confirmation === "pending" && "Pending"}
+            {confirmation === "allow-once" && "Allowed once"}
+            {confirmation === "always-allow" && "Always allow"}
+            {confirmation === "denying" && "Denying"}
+            {confirmation === "retrying" && "Retrying"}
+            {confirmation === "denied" && "Denied"}
+            {confirmation === "error" && "Action failed"}
+          </span>
+        </div>
+        {confirmationNote && <p className="confirmation-note">{confirmationNote}</p>}
+        <div className="chat-confirmation-actions">
+          <button
+            className="confirm-btn confirm-deny"
+            onClick={() => {
+              void handleDeny();
+            }}
+            disabled={Boolean(isDenying) || confirmation === "denying" || confirmation === "retrying"}
+          >
+            <span>
+              {confirmation === "denying" || confirmation === "retrying" || isDenying
+                ? "Denying..."
+                : "Deny"}
+            </span>
+            <kbd>Esc</kbd>
+          </button>
+          <button
+            className="confirm-btn confirm-once"
+            onClick={handleAllowOnce}
+          >
+            <span>Allow once</span>
+            <kbd>Enter</kbd>
+          </button>
+          <button
+            className="confirm-btn confirm-always"
+            onClick={handleAlwaysAllow}
+          >
+            <span>Always allow</span>
+            <kbd>Cmd+Enter</kbd>
+          </button>
+        </div>
+      </div>
     </aside>
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

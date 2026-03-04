@@ -622,6 +622,8 @@ a:hover {
 
 .chat-thread {
   padding: 18px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -740,6 +742,152 @@ a:hover {
   font-size: 12px;
 }
 
+.chat-confirmation {
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, #f8efe2 0%, #f5eadb 100%);
+  color: var(--text);
+  padding: 10px 12px 12px;
+}
+
+.chat-confirmation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.chat-confirmation-head p {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.confirmation-state {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid;
+}
+
+.state-pending {
+  color: #7a5f43;
+  border-color: #d0b695;
+  background: #f2e4d2;
+}
+
+.state-allow-once {
+  color: #4f6a90;
+  border-color: #9eb0cb;
+  background: #e9eef8;
+}
+
+.state-always-allow {
+  color: #247a53;
+  border-color: #8fc7ad;
+  background: #dff3ea;
+}
+
+.state-denied {
+  color: #b63f2f;
+  border-color: #d8a097;
+  background: #f8e3de;
+}
+
+.state-denying,
+.state-retrying {
+  color: #7a5f43;
+  border-color: #d0b695;
+  background: #f2e4d2;
+}
+
+.state-error {
+  color: #b63f2f;
+  border-color: #d8a097;
+  background: #f8e3de;
+}
+
+.confirmation-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.chat-confirmation-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.confirm-btn {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid #cdb498;
+  border-radius: 9px;
+  padding: 7px 8px;
+  background: #fff8ef;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.confirm-btn:hover {
+  border-color: #b99b79;
+}
+
+.confirm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.confirm-deny {
+  background: #f9e5e1;
+  border-color: #d7a09a;
+  color: #9f3324;
+}
+
+.confirm-deny:hover {
+  border-color: #c5786d;
+}
+
+.confirm-once {
+  background: #eef2fb;
+  border-color: #9eb1ce;
+  color: #3f597f;
+}
+
+.confirm-once:hover {
+  border-color: #748fb6;
+}
+
+.confirm-always {
+  background: #e4f2eb;
+  border-color: #8fbea9;
+  color: #1f6e4a;
+}
+
+.confirm-always:hover {
+  border-color: #6ca98e;
+}
+
+.confirm-btn kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: #6e5f50;
+  border: 1px solid #d4c1aa;
+  border-bottom-color: #bea88e;
+  background: #fffaf3;
+  border-radius: 6px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 /* ── Responsive ────────────────────────────────────────── */
 @media (max-width: 1120px) {
   .job-chat-layout {
@@ -810,5 +958,9 @@ a:hover {
 
   .chat-user {
     margin-left: auto;
+  }
+
+  .chat-confirmation-actions {
+    flex-direction: column;
   }
 }

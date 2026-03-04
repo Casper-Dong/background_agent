@@ -1,7 +1,7 @@
 import { Job as BullJob } from "bullmq";
 import { config } from "./config";
 import { createWorker, JobPayload } from "./queue";
-import { getJob, updateJob, appendLog, createArtifact, pool } from "./db";
+import { getJob, updateJob, appendLog, createArtifact, getJobLogs, pool } from "./db";
 import {
   launchSandbox,
   waitForSandbox,
@@ -40,6 +40,7 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
   }
 
   let containerId: string | undefined;
+  let branch: string | undefined;
 
   try {
     // ── 1. Mark as running ───────────────────────────────
@@ -65,7 +66,7 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
 
     // ── 2. Prepare branch ────────────────────────────────
 
-    const branch = generateBranchName(jobId);
+    branch = generateBranchName(jobId);
     await updateJob(jobId, { branch });
     await log(jobId, `Branch: ${branch}`, "info", "system");
 
@@ -191,6 +192,17 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
 
       // Notify Slack
       await notifySlackCompletion(job, "succeeded", prUrl);
+      await appendExecutionSummary({
+        jobId,
+        task: job.task,
+        agentType: job.agent_type,
+        maxIterations: job.max_iterations,
+        status: "succeeded",
+        branch,
+        prUrl,
+        diffSummary: result.diffSummary,
+        testOutput: result.testOutput,
+      });
 
     } else {
       // Failure
@@ -203,6 +215,17 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
       await log(jobId, `Job failed: ${errorMsg}`, "error", "system");
 
       await notifySlackCompletion(job, "failed", null, errorMsg);
+      await appendExecutionSummary({
+        jobId,
+        task: job.task,
+        agentType: job.agent_type,
+        maxIterations: job.max_iterations,
+        status: "failed",
+        branch,
+        error: errorMsg,
+        diffSummary: result.diffSummary,
+        testOutput: result.testOutput,
+      });
     }
 
     // Signal SSE clients that the job is done
@@ -217,9 +240,18 @@ const worker = createWorker(async (bullJob: BullJob<JobPayload>) => {
       error: err.message,
     });
     await log(jobId, `Worker error: ${err.message}`, "error", "system");
-    logBus.emit(`job:${jobId}:done`, { status: "failed" });
 
     await notifySlackCompletion(job, "failed", null, err.message);
+    await appendExecutionSummary({
+      jobId,
+      task: job.task,
+      agentType: job.agent_type,
+      maxIterations: job.max_iterations,
+      status: "failed",
+      branch,
+      error: err.message,
+    });
+    logBus.emit(`job:${jobId}:done`, { status: "failed" });
 
   } finally {
     // Clean up sandbox container
@@ -261,6 +293,142 @@ async function notifySlackCompletion(
   } catch (err: any) {
     console.warn("[worker] Slack notification failed:", err.message);
   }
+}
+
+async function appendExecutionSummary(params: {
+  jobId: string;
+  task: string;
+  agentType: string;
+  maxIterations: number;
+  status: "succeeded" | "failed" | "cancelled";
+  branch?: string | null;
+  prUrl?: string | null;
+  error?: string | null;
+  diffSummary?: string | null;
+  testOutput?: string | null;
+}) {
+  try {
+    const logs = await getJobLogs(params.jobId, 0, 10000);
+    const summary = buildExecutionSummary(params, logs);
+    await log(
+      params.jobId,
+      summary,
+      params.status === "succeeded" ? "info" : "warn",
+      "system"
+    );
+    await createArtifact({
+      job_id: params.jobId,
+      type: "summary",
+      name: "Execution summary",
+      content: summary,
+    });
+  } catch (err: any) {
+    console.warn(`[worker] Failed to append execution summary for ${params.jobId}:`, err.message);
+  }
+}
+
+function buildExecutionSummary(
+  params: {
+    task: string;
+    agentType: string;
+    maxIterations: number;
+    status: "succeeded" | "failed" | "cancelled";
+    branch?: string | null;
+    prUrl?: string | null;
+    error?: string | null;
+    diffSummary?: string | null;
+    testOutput?: string | null;
+  },
+  logs: Array<{ message: string }>
+): string {
+  const normalized = logs.map((entry) => normalizeLogLine(entry.message));
+  const includes = (pattern: RegExp) => normalized.some((line) => pattern.test(line));
+  const retryCount = normalized.filter((line) => /retrying/i.test(line)).length;
+  const maxIterationSeen = normalized.reduce((max, line) => {
+    const match = line.match(/===\s*Iteration\s+(\d+)\s*\/\s*(\d+)\s*===/i);
+    if (!match) return max;
+    return Math.max(max, Number(match[1]) || 0);
+  }, 0);
+
+  const actionChecks = [
+    { label: "Started sandbox environment", done: includes(/launching sandbox container|sandbox container:/i) },
+    { label: "Cloned repository and created branch", done: includes(/cloning repo|creating branch|switched to a new branch/i) },
+    { label: `Ran ${params.agentType} to implement changes`, done: includes(/running agent|running claude|running opencode|running openai codex|mock agent/i) },
+    { label: "Ran verification loop", done: includes(/running verify\.sh|running verification|\[verify\]/i) },
+    { label: "Committed changes", done: includes(/committing changes|\[[^\]]+\]\s+agent:/i) },
+    { label: "Pushed branch", done: includes(/pushing branch|push complete|new branch/i) },
+    { label: "Opened pull request", done: Boolean(params.prUrl) || includes(/pr created:/i) },
+  ];
+
+  const plan = [
+    `1. Prepare an isolated sandbox and branch for the task.`,
+    `2. Run ${params.agentType} in iterative passes (up to ${params.maxIterations}).`,
+    `3. Execute verify.sh after each pass and fix issues until checks pass or attempts are exhausted.`,
+    `4. Commit/push the branch and create a PR when verification succeeds.`,
+  ];
+
+  const performed = actionChecks.map((step) => `- [${step.done ? "x" : " "}] ${step.label}`);
+  const verificationStatus = deriveVerificationStatus(params.testOutput, normalized);
+  const diffHeadline = extractDiffHeadline(params.diffSummary);
+  const safeError = params.error ? params.error.replace(/\s+/g, " ").trim().slice(0, 500) : "";
+
+  const outcome: string[] = [
+    `- Status: ${params.status}`,
+    `- Branch: ${params.branch || "n/a"}`,
+    `- Iterations used: ${maxIterationSeen || "n/a"} / ${params.maxIterations}`,
+    `- Verification: ${verificationStatus}`,
+  ];
+  if (params.prUrl) outcome.push(`- PR: ${params.prUrl}`);
+  if (diffHeadline) outcome.push(`- Diff: ${diffHeadline}`);
+  if (retryCount > 0) outcome.push(`- Launch retries: ${retryCount}`);
+  if (safeError) outcome.push(`- Error: ${safeError}`);
+
+  return [
+    "Execution summary",
+    `Task: ${params.task}`,
+    "",
+    "Planned approach:",
+    ...plan,
+    "",
+    "What was done:",
+    ...performed,
+    "",
+    "Outcome:",
+    ...outcome,
+  ].join("\n");
+}
+
+function normalizeLogLine(message: string): string {
+  let text = message.trim();
+  const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+/;
+  while (timestamp.test(text)) {
+    text = text.replace(timestamp, "");
+  }
+  return text;
+}
+
+function extractDiffHeadline(diffSummary?: string | null): string {
+  if (!diffSummary) return "";
+  const lines = diffSummary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && line !== "---");
+  if (lines.length === 0) return "";
+  return lines[0];
+}
+
+function deriveVerificationStatus(
+  testOutput: string | null | undefined,
+  normalizedLogs: string[]
+): string {
+  const combined = `${testOutput || ""}\n${normalizedLogs.join("\n")}`;
+  if (/all checks passed|verification passed|exit code:\s*0/i.test(combined)) {
+    return "passed";
+  }
+  if (/verification failed|fail:|test failures|exit code:\s*[1-9]/i.test(combined)) {
+    return "failed";
+  }
+  return "unknown";
 }
 
 function formatPrBody(
