@@ -1,4 +1,4 @@
-# Background Agent
+# Background Agent "RUE" (Repo, Utility, Engineering)
 
 A self-hosted background coding agent system. Submit tasks via Slack (`/inspect`) or the web UI, and an AI agent checks out your repo, makes changes, runs verification, and opens a PR.
 
