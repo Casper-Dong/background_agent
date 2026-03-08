@@ -1,5 +1,7 @@
 # Background Agent "RUE" (Repo, Utility, Engineering)
 
+Inspired by the Ramp article: https://builders.ramp.com/post/why-we-built-our-background-agent
+
 A self-hosted background coding agent system. Submit tasks via Slack (`/inspect`) or the web UI, and an AI agent checks out your repo in an isolated Docker sandbox, makes changes, runs verification, and opens a PR — all without blocking your workflow.
 
 ## Architecture
